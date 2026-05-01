@@ -1,14 +1,12 @@
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, HTTPException, Form
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 import warnings
 import io
-import requests
-import urllib.parse
 
 warnings.filterwarnings('ignore')
 
@@ -38,25 +36,6 @@ province_tier = {
     '河北省': '二线', '江西省': '二线', '广西壮族自治区': '二线', '云南省': '二线',
     '贵州省': '二线', '山西省': '二线', '吉林省': '二线', '黑龙江省': '二线',
 }
-
-
-def download_file(url: str) -> pd.DataFrame:
-    """从URL下载Excel文件并返回DataFrame - 修复编码问题"""
-    # 对URL进行编码处理
-    parsed = urllib.parse.urlparse(url)
-    # 解码后再重新编码，确保中文正确处理
-    decoded_path = urllib.parse.unquote(parsed.path)
-    encoded_path = urllib.parse.quote(decoded_path)
-    new_url = urllib.parse.urlunparse(parsed._replace(path=encoded_path))
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    response = requests.get(new_url, headers=headers)
-    response.raise_for_status()
-    
-    # 直接使用二进制内容
-    return pd.read_excel(io.BytesIO(response.content))
 
 
 def load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df):
@@ -178,24 +157,24 @@ def get_all_malls_cluster(df):
 # ==================== 端点1：所有商业体各系列占比预测 ====================
 @app.post("/series-ratio-predict")
 async def series_ratio_predict(
-    population_file: str = Form(...),
-    phone_file: str = Form(...),
-    age_file: str = Form(...),
-    gender_file: str = Form(...),
-    asset_file: str = Form(...),
-    sales_file: str = Form(...),
-    flash_mapping_file: str = Form(...)
+    population_file: UploadFile = File(...),
+    phone_file: UploadFile = File(...),
+    age_file: UploadFile = File(...),
+    gender_file: UploadFile = File(...),
+    asset_file: UploadFile = File(...),
+    sales_file: UploadFile = File(...),
+    flash_mapping_file: UploadFile = File(...)
 ):
-    """生成所有商业体_各系列占比预测.xlsx（与原始代码完全一致）"""
+    """生成所有商业体_各系列占比预测.xlsx"""
     try:
-        # 读取上传的文件
-        population_df = download_file(population_file)
-        phone_df = download_file(phone_file)
-        age_df = download_file(age_file)
-        gender_df = download_file(gender_file)
-        asset_df = download_file(asset_file)
-        sales_detail = download_file(sales_file)
-        flash_mapping = download_file(flash_mapping_file)
+        # 读取上传的文件（直接读取文件内容）
+        population_df = pd.read_excel(io.BytesIO(await population_file.read()))
+        phone_df = pd.read_excel(io.BytesIO(await phone_file.read()))
+        age_df = pd.read_excel(io.BytesIO(await age_file.read()))
+        gender_df = pd.read_excel(io.BytesIO(await gender_file.read()))
+        asset_df = pd.read_excel(io.BytesIO(await asset_file.read()))
+        sales_detail = pd.read_excel(io.BytesIO(await sales_file.read()))
+        flash_mapping = pd.read_excel(io.BytesIO(await flash_mapping_file.read()))
         
         # 数据预处理
         df = load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df)
@@ -262,27 +241,27 @@ async def series_ratio_predict(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 端点2：一线和新一线高潜力商业体TOP20 ====================
+# ==================== 端点2：TOP20 ====================
 @app.post("/top20")
 async def top20(
-    population_file: str = Form(...),
-    phone_file: str = Form(...),
-    age_file: str = Form(...),
-    gender_file: str = Form(...),
-    asset_file: str = Form(...),
-    sales_file: str = Form(...),
-    flash_mapping_file: str = Form(...)
+    population_file: UploadFile = File(...),
+    phone_file: UploadFile = File(...),
+    age_file: UploadFile = File(...),
+    gender_file: UploadFile = File(...),
+    asset_file: UploadFile = File(...),
+    sales_file: UploadFile = File(...),
+    flash_mapping_file: UploadFile = File(...)
 ):
-    """生成一线和新一线高潜力商业体TOP20.xlsx（与原始代码完全一致）"""
+    """生成一线和新一线高潜力商业体TOP20.xlsx"""
     try:
         # 读取上传的文件
-        population_df = download_file(population_file)
-        phone_df = download_file(phone_file)
-        age_df = download_file(age_file)
-        gender_df = download_file(gender_file)
-        asset_df = download_file(asset_file)
-        sales_detail = download_file(sales_file)
-        flash_mapping = download_file(flash_mapping_file)
+        population_df = pd.read_excel(io.BytesIO(await population_file.read()))
+        phone_df = pd.read_excel(io.BytesIO(await phone_file.read()))
+        age_df = pd.read_excel(io.BytesIO(await age_file.read()))
+        gender_df = pd.read_excel(io.BytesIO(await gender_file.read()))
+        asset_df = pd.read_excel(io.BytesIO(await asset_file.read()))
+        sales_detail = pd.read_excel(io.BytesIO(await sales_file.read()))
+        flash_mapping = pd.read_excel(io.BytesIO(await flash_mapping_file.read()))
         
         # 数据预处理
         df = load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df)
