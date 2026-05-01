@@ -1,12 +1,14 @@
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Form
+from fastapi.responses import JSONResponse
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 import warnings
 import io
+import requests
+import urllib.parse
 
 warnings.filterwarnings('ignore')
 
@@ -38,17 +40,26 @@ province_tier = {
 }
 
 
+def download_file(url: str) -> pd.DataFrame:
+    """从URL下载Excel文件并返回DataFrame"""
+    parsed = urllib.parse.urlparse(url)
+    decoded_path = urllib.parse.unquote(parsed.path)
+    encoded_path = urllib.parse.quote(decoded_path)
+    new_url = urllib.parse.urlunparse(parsed._replace(path=encoded_path))
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    response = requests.get(new_url, headers=headers)
+    response.raise_for_status()
+    return pd.read_excel(io.BytesIO(response.content))
+
+
 def load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df):
-    """合并所有sheet并计算特征指标"""
     phone_columns = ['赢商项目ID'] + ['APPLE', 'HUAWEI', 'SAMSUNG']
     phone_df = phone_df[phone_columns]
-
     age_columns = ['赢商项目ID'] + ['19-24', '25-29']
     age_df = age_df[age_columns]
-
     gender_columns = ['赢商项目ID', '女性占比']
     gender_df = gender_df[gender_columns]
-
     asset_columns = ['赢商项目ID'] + ['超级富豪', '富豪', '中产']
     asset_df = asset_df[asset_columns]
 
@@ -61,13 +72,11 @@ def load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df):
     df['高消费力_资产'] = df['超级富豪'] + df['富豪'] + df['中产']
     df['高消费力_手机'] = df['APPLE'] + df['HUAWEI'] + df['SAMSUNG']
     df['高消费力'] = (df['高消费力_资产'] + df['高消费力_手机']) / 2
-
     df['省份分数'] = df['省份'].map(province_score)
     return df
 
 
 def calculate_series_ratio(sales_detail_df):
-    """计算15个快闪店的系列销售占比"""
     series_mapping = {
         '李宁荣耀金标': '金标',
         '李宁荣耀': '荣耀',
@@ -105,12 +114,10 @@ def calculate_series_ratio(sales_detail_df):
     row_sum = category_ratio_wide[ratio_cols].sum(axis=1)
     for col in ratio_cols:
         category_ratio_wide[col] = category_ratio_wide[col] / row_sum
-
     return category_ratio_wide
 
 
 def get_flash_cluster_result(df, flash_mapping_df):
-    """对15个快闪店进行聚类"""
     all_features_df = df[['李宁商场名称', '年轻占比', '女性占比', '高消费力', '3公里工作人口', '省份分数']].copy()
     liNing_store_names = flash_mapping_df['李宁商场名称'].unique().tolist()
     matched_features = all_features_df[all_features_df['李宁商场名称'].isin(liNing_store_names)].copy()
@@ -133,7 +140,6 @@ def get_flash_cluster_result(df, flash_mapping_df):
 
 
 def get_all_malls_cluster(df):
-    """对所有商业体进行聚类"""
     cluster_features = ['年轻占比', '女性占比', '高消费力', '3公里工作人口', '省份分数']
     all_malls_df = df[['李宁商场名称', '城市', '省份', '赢商项目ID'] + cluster_features].copy()
     all_malls_df = all_malls_df.dropna(subset=cluster_features)
@@ -145,7 +151,6 @@ def get_all_malls_cluster(df):
 
     name_mapping = {0: "一线城市标杆店", 1: "女性高消潜力店", 2: "年轻潮流主力店"}
     all_malls_df['客群类型名称'] = all_malls_df['客群类型'].map(name_mapping)
-
     all_malls_df['省份Tier'] = all_malls_df['省份'].map(province_tier)
 
     output_columns = ['李宁商场名称', '城市', '省份', '省份Tier', '赢商项目ID',
@@ -154,29 +159,27 @@ def get_all_malls_cluster(df):
     return all_malls_df[output_columns]
 
 
-# ==================== 端点1：所有商业体各系列占比预测 ====================
+# ==================== 端点1：所有商业体各系列占比预测（返回JSON） ====================
 @app.post("/series-ratio-predict")
 async def series_ratio_predict(
-    population_file: UploadFile = File(...),
-    phone_file: UploadFile = File(...),
-    age_file: UploadFile = File(...),
-    gender_file: UploadFile = File(...),
-    asset_file: UploadFile = File(...),
-    sales_file: UploadFile = File(...),
-    flash_mapping_file: UploadFile = File(...)
+    population_file: str = Form(...),
+    phone_file: str = Form(...),
+    age_file: str = Form(...),
+    gender_file: str = Form(...),
+    asset_file: str = Form(...),
+    sales_file: str = Form(...),
+    flash_mapping_file: str = Form(...)
 ):
-    """生成所有商业体_各系列占比预测.xlsx"""
     try:
-        # 读取上传的文件
-        population_df = pd.read_excel(io.BytesIO(await population_file.read()))
-        phone_df = pd.read_excel(io.BytesIO(await phone_file.read()))
-        age_df = pd.read_excel(io.BytesIO(await age_file.read()))
-        gender_df = pd.read_excel(io.BytesIO(await gender_file.read()))
-        asset_df = pd.read_excel(io.BytesIO(await asset_file.read()))
-        sales_detail = pd.read_excel(io.BytesIO(await sales_file.read()))
-        flash_mapping = pd.read_excel(io.BytesIO(await flash_mapping_file.read()))
+        # 下载文件
+        population_df = download_file(population_file)
+        phone_df = download_file(phone_file)
+        age_df = download_file(age_file)
+        gender_df = download_file(gender_file)
+        asset_df = download_file(asset_file)
+        sales_detail = download_file(sales_file)
+        flash_mapping = download_file(flash_mapping_file)
 
-        # 数据预处理
         df = load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df)
 
         # 15个快闪店聚类
@@ -188,8 +191,7 @@ async def series_ratio_predict(
         # 合并
         final_df = category_ratio.merge(
             flash_cluster[['店铺名称', '年轻占比', '女性占比', '高消费力', '3公里工作人口', '省份分数', '客群类型名称']],
-            on='店铺名称',
-            how='inner'
+            on='店铺名称', how='inner'
         )
 
         # 各客群类型的平均系列占比
@@ -219,51 +221,43 @@ async def series_ratio_predict(
         for col in target_cols:
             df_predict_raw[col] = models_dict[col].predict(X_predict)
 
-        # 归一化
         row_sum = df_predict_raw[target_cols].sum(axis=1)
         for col in target_cols:
             df_predict_raw[col] = df_predict_raw[col] / row_sum
 
-        # 保存到Excel
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_predict_raw.to_excel(writer, sheet_name='所有商业体预测', index=False)
-            type_summary.to_excel(writer, sheet_name='各客群类型平均占比')
-        output.seek(0)
-
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=所有商业体_各系列占比预测.xlsx"}
-        )
+        # 返回JSON
+        return JSONResponse(content={
+            "status": "success",
+            "message": "所有商业体各系列占比预测完成",
+            "type_summary": type_summary.to_dict(),
+            "predictions": df_predict_raw[['李宁商场名称', '城市'] + target_cols].head(100).to_dict(orient='records')
+        })
     except Exception as e:
-        print(f"Error in series-ratio-predict: {str(e)}")
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 端点2：一线和新一线高潜力商业体TOP20 ====================
+# ==================== 端点2：TOP20（返回JSON） ====================
 @app.post("/top20")
 async def top20(
-    population_file: UploadFile = File(...),
-    phone_file: UploadFile = File(...),
-    age_file: UploadFile = File(...),
-    gender_file: UploadFile = File(...),
-    asset_file: UploadFile = File(...),
-    sales_file: UploadFile = File(...),
-    flash_mapping_file: UploadFile = File(...)
+    population_file: str = Form(...),
+    phone_file: str = Form(...),
+    age_file: str = Form(...),
+    gender_file: str = Form(...),
+    asset_file: str = Form(...),
+    sales_file: str = Form(...),
+    flash_mapping_file: str = Form(...)
 ):
-    """生成一线和新一线高潜力商业体TOP20.xlsx"""
     try:
-        # 读取上传的文件
-        population_df = pd.read_excel(io.BytesIO(await population_file.read()))
-        phone_df = pd.read_excel(io.BytesIO(await phone_file.read()))
-        age_df = pd.read_excel(io.BytesIO(await age_file.read()))
-        gender_df = pd.read_excel(io.BytesIO(await gender_file.read()))
-        asset_df = pd.read_excel(io.BytesIO(await asset_file.read()))
-        sales_detail = pd.read_excel(io.BytesIO(await sales_file.read()))
-        flash_mapping = pd.read_excel(io.BytesIO(await flash_mapping_file.read()))
+        # 下载文件
+        population_df = download_file(population_file)
+        phone_df = download_file(phone_file)
+        age_df = download_file(age_file)
+        gender_df = download_file(gender_file)
+        asset_df = download_file(asset_file)
+        sales_detail = download_file(sales_file)
+        flash_mapping = download_file(flash_mapping_file)
 
-        # 数据预处理
         df = load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df)
 
         # 15个快闪店聚类
@@ -275,8 +269,7 @@ async def top20(
         # 合并
         final_df = category_ratio.merge(
             flash_cluster[['店铺名称', '年轻占比', '女性占比', '高消费力', '3公里工作人口', '省份分数', '客群类型名称']],
-            on='店铺名称',
-            how='inner'
+            on='店铺名称', how='inner'
         )
 
         # 训练模型
@@ -312,70 +305,27 @@ async def top20(
         new_tier1_cities = ['成都市', '杭州市', '重庆市', '武汉市', '苏州市', '西安市', '南京市',
                              '长沙市', '郑州市', '天津市', '合肥市', '青岛市', '东莞市', '宁波市']
 
-        # 一线城市金标TOP20
         df_tier1 = df_predict_raw[df_predict_raw['城市'].isin(tier1_cities)].copy()
         top_gold_tier1 = df_tier1.nlargest(20, '金标Proportion')[
             ['李宁商场名称', '城市', '金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
-        ].copy().reset_index(drop=True)
+        ].to_dict(orient='records')
 
-        # 新一线城市金标TOP20
         df_new_tier1 = df_predict_raw[df_predict_raw['城市'].isin(new_tier1_cities)].copy()
         top_gold_new_tier1 = df_new_tier1.nlargest(20, '金标Proportion')[
             ['李宁商场名称', '城市', '金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
-        ].copy().reset_index(drop=True)
+        ].to_dict(orient='records')
 
-        # 一线城市荣耀TOP20
-        top_glory_tier1 = df_tier1.nlargest(20, '荣耀Proportion')[
-            ['李宁商场名称', '城市', '金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
-        ].copy().reset_index(drop=True)
-
-        # 新一线城市荣耀TOP20
-        top_glory_new_tier1 = df_new_tier1.nlargest(20, '荣耀Proportion')[
-            ['李宁商场名称', '城市', '金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
-        ].copy().reset_index(drop=True)
-
-        # 一线城市国家队TOP20
-        top_national_tier1 = df_tier1.nlargest(20, '国家队Proportion')[
-            ['李宁商场名称', '城市', '金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
-        ].copy().reset_index(drop=True)
-
-        # 新一线城市国家队TOP20
-        top_national_new_tier1 = df_new_tier1.nlargest(20, '国家队Proportion')[
-            ['李宁商场名称', '城市', '金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
-        ].copy().reset_index(drop=True)
-
-        # 城市汇总
-        df_all_filtered = df_predict_raw[df_predict_raw['城市'].isin(tier1_cities + new_tier1_cities)].copy()
-        city_summary = df_all_filtered.groupby('城市').agg({
-            '金标Proportion': 'mean',
-            '荣耀Proportion': 'mean',
-            '国家队Proportion': 'mean',
-            '李宁商场名称': 'count'
-        }).rename(columns={'李宁商场名称': '商业体数量'}).round(4)
-
-        # 保存到Excel
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            top_gold_tier1.to_excel(writer, sheet_name='一线城市_金标TOP20', index=False)
-            top_gold_new_tier1.to_excel(writer, sheet_name='新一线城市_金标TOP20', index=False)
-            top_glory_tier1.to_excel(writer, sheet_name='一线城市_荣耀TOP20', index=False)
-            top_glory_new_tier1.to_excel(writer, sheet_name='新一线城市_荣耀TOP20', index=False)
-            top_national_tier1.to_excel(writer, sheet_name='一线城市_国家队TOP20', index=False)
-            top_national_new_tier1.to_excel(writer, sheet_name='新一线城市_国家队TOP20', index=False)
-            city_summary.to_excel(writer, sheet_name='城市汇总')
-        output.seek(0)
-
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=一线和新一线高潜力商业体TOP20.xlsx"}
-        )
+        return JSONResponse(content={
+            "status": "success",
+            "message": "TOP20高潜力商业体筛选完成",
+            "一线城市_金标TOP20": top_gold_tier1,
+            "新一线城市_金标TOP20": top_gold_new_tier1
+        })
     except Exception as e:
-        print(f"Error in top20: {str(e)}")
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 健康检查 ====================
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
