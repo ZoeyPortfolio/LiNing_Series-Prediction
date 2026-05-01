@@ -7,15 +7,14 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 import warnings
 import io
-import os
+import requests
+import urllib.parse
 
 warnings.filterwarnings('ignore')
 
 app = FastAPI(title="李宁快闪店分析API")
 
-# ==================== 全局变量存储模型和预训练数据 ====================
-scaler = None
-models = {}
+# ==================== 全局配置 ====================
 train_features = ['年轻占比', '女性占比', '高消费力', '3公里工作人口', '省份分数']
 target_cols = ['金标Proportion', '荣耀Proportion', '国家队Proportion', '其他Proportion']
 
@@ -39,6 +38,25 @@ province_tier = {
     '河北省': '二线', '江西省': '二线', '广西壮族自治区': '二线', '云南省': '二线',
     '贵州省': '二线', '山西省': '二线', '吉林省': '二线', '黑龙江省': '二线',
 }
+
+
+def download_file(url: str) -> pd.DataFrame:
+    """从URL下载Excel文件并返回DataFrame - 修复编码问题"""
+    # 对URL进行编码处理
+    parsed = urllib.parse.urlparse(url)
+    # 解码后再重新编码，确保中文正确处理
+    decoded_path = urllib.parse.unquote(parsed.path)
+    encoded_path = urllib.parse.quote(decoded_path)
+    new_url = urllib.parse.urlunparse(parsed._replace(path=encoded_path))
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    response = requests.get(new_url, headers=headers)
+    response.raise_for_status()
+    
+    # 直接使用二进制内容
+    return pd.read_excel(io.BytesIO(response.content))
 
 
 def load_and_merge_data(population_df, phone_df, age_df, gender_df, asset_df):
@@ -171,14 +189,6 @@ async def series_ratio_predict(
     """生成所有商业体_各系列占比预测.xlsx（与原始代码完全一致）"""
     try:
         # 读取上传的文件
-        from io import BytesIO
-        import requests
-        
-        def download_file(url: str) -> pd.DataFrame:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            return pd.read_excel(BytesIO(response.content))
-        
         population_df = download_file(population_file)
         phone_df = download_file(phone_file)
         age_df = download_file(age_file)
@@ -248,6 +258,7 @@ async def series_ratio_predict(
             headers={"Content-Disposition": "attachment; filename=所有商业体_各系列占比预测.xlsx"}
         )
     except Exception as e:
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -264,14 +275,7 @@ async def top20(
 ):
     """生成一线和新一线高潜力商业体TOP20.xlsx（与原始代码完全一致）"""
     try:
-        from io import BytesIO
-        import requests
-        
-        def download_file(url: str) -> pd.DataFrame:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            return pd.read_excel(BytesIO(response.content))
-        
+        # 读取上传的文件
         population_df = download_file(population_file)
         phone_df = download_file(phone_file)
         age_df = download_file(age_file)
@@ -388,6 +392,7 @@ async def top20(
             headers={"Content-Disposition": "attachment; filename=一线和新一线高潜力商业体TOP20.xlsx"}
         )
     except Exception as e:
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
