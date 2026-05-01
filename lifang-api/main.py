@@ -175,7 +175,7 @@ async def series_ratio_predict(
         import requests
         
         def download_file(url: str) -> pd.DataFrame:
-            response = requests.get(url)
+            response = requests.get(url, stream=True)
             response.raise_for_status()
             return pd.read_excel(BytesIO(response.content))
         
@@ -268,7 +268,7 @@ async def top20(
         import requests
         
         def download_file(url: str) -> pd.DataFrame:
-            response = requests.get(url)
+            response = requests.get(url, stream=True)
             response.raise_for_status()
             return pd.read_excel(BytesIO(response.content))
         
